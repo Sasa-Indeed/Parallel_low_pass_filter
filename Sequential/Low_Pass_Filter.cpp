@@ -2,13 +2,28 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/opencv.hpp>
-
+#include <string.h>
 #include <iostream>
+#include <algorithm>
 
+
+std::string getImagePath();
 
 int main() {
 
-    cv::Mat img = cv::imread("D:/ASU/5-Senior 2/Spring 25/CSE455 HPC/Project/lena.png"), imgdest;
+    std::string path;
+    bool flag = false;
+
+    do {
+        if (flag) {
+            std::cout << "Incorrect path please check the path and try again!\n";
+        }
+        path = getImagePath();
+        flag = true;
+    } while (!cv::haveImageReader(path));
+    
+
+    cv::Mat img = cv::imread(path), imgdest;
 
     float kernelLength, kernelWidth , normalizationFactor;
 
@@ -24,7 +39,10 @@ int main() {
         normalizationFactor = kernelLength * kernelWidth;
     }
 
-    std::cout << "\nYour configurations are\nLength = " << kernelLength << "\nWidth = " <<  kernelWidth << "\nNormalization factor = " << normalizationFactor;
+    std::cout << "\nYour configurations are:\nImage path: " << path
+        <<"\nLength = " << kernelLength
+        << "\nWidth = " <<  kernelWidth
+        << "\nNormalization factor = " << normalizationFactor;
     
     cv::Mat kernel = cv::Mat::ones(kernelLength, kernelWidth, CV_32F) / normalizationFactor;
     
@@ -37,4 +55,15 @@ int main() {
     cv::waitKey(0);
     cv::destroyAllWindows();
     return 0;
+}
+
+std::string getImagePath() {
+    std::string path;
+
+    std::cout << "Enter image path: ";
+    std::getline(std::cin, path);
+
+    std::replace(path.begin(), path.end(), '\\', '/');
+
+    return path;
 }
