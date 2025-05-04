@@ -70,10 +70,10 @@ void applyBoxBlur(const Mat &input, Mat &output, int kernel_size)
     merge(blurred_channels, output);
 }
 
-// Create side-by-side comparison of input and output images
+
 Mat createComparisonImage(const Mat &input, const Mat &output)
 {
-    // Ensure both images have the same dimensions
+    
     Mat resized_output;
     if (input.size() != output.size())
     {
@@ -84,20 +84,16 @@ Mat createComparisonImage(const Mat &input, const Mat &output)
         resized_output = output.clone();
     }
 
-    // Create canvas for side-by-side comparison
     int height = input.rows;
     int width = input.cols;
     Mat comparison(height + 60, width * 2 + 10, CV_8UC3, Scalar(255, 255, 255));
-
-    // Add titles
+    
     putText(comparison, "Original", Point(width / 2 - 50, 30), FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 0, 0), 2);
     putText(comparison, "Blurred", Point(width + width / 2 - 50, 30), FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 0, 0), 2);
 
-    // Copy images
     input.copyTo(comparison(Rect(0, 50, width, height)));
     resized_output.copyTo(comparison(Rect(width + 10, 50, width, height)));
 
-    // Draw dividing line
     line(comparison, Point(width + 5, 0), Point(width + 5, height + 50), Scalar(0, 0, 0), 2);
 
     return comparison;
