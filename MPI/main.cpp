@@ -10,6 +10,9 @@ using namespace cv;
 using namespace std;
 using namespace std::chrono;
 
+std::string getImagePath();
+
+
 void applyBlurToChannel(const Mat &input_channel, Mat &output_channel, int kernel_size)
 {
     int rows = input_channel.rows;
@@ -99,7 +102,7 @@ Mat createComparisonImage(const Mat &input, const Mat &output)
     return comparison;
 }
 
-int main(int argc, char **argv)
+int main(int argc, char** argv)
 {
     MPI_Init(&argc, &argv);
 
@@ -107,35 +110,28 @@ int main(int argc, char **argv)
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &num_processes);
 
-    if (argc < 4)
-    {
-        if (rank == 0)
-        {
-            cout << "Usage: mpirun -np <num_processes> ./blur <input_image> <output_image> <kernel_size>" << endl;
-        }
-        MPI_Finalize();
-        return -1;
-    }
-
-    string input_path = argv[1];
-    string output_path = argv[2];
-    int kernel_size = atoi(argv[3]);
-
-    if (kernel_size % 2 == 0 || kernel_size < 3)
-    {
-        if (rank == 0)
-        {
-            cout << "Kernel size must be an odd number greater than or equal to 3." << endl;
-        }
-        MPI_Finalize();
-        return -1;
-    }
+    bool flag = false;
+    string input_path;
+    string output_path = "outImage.jpg";
+    int kernel_size = 0;
 
     Mat image;
     int rows = 0, cols = 0, channels = 0;
 
     if (rank == 0)
     {
+        do {
+            if (flag) {
+                std::cout << "Incorrect path please check the path and try again!\n";
+            }
+            input_path = getImagePath();
+            flag = true;
+        } while (!cv::haveImageReader(input_path));
+
+        std::cout << "Dynamic kernel choices must be > 1 and ideally odd (3, 5, 7...)\n";
+        std::cout << "Choose Kernel length: ";
+        std::cin >> kernel_size;
+
         image = imread(input_path, IMREAD_COLOR);
         if (image.empty())
         {
@@ -154,6 +150,7 @@ int main(int argc, char **argv)
     MPI_Bcast(&rows, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&cols, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&channels, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&kernel_size, 1, MPI_INT, 0, MPI_COMM_WORLD);  // NEW: broadcast kernel size
 
     int k = kernel_size / 2;
     int rows_per_process = rows / num_processes;
@@ -181,19 +178,20 @@ int main(int argc, char **argv)
         displs[i] = i_top * cols * channels;
     }
 
-    Mat local_chunk(actual_rows, cols, CV_8UC3);
+    Mat local_chunk(actual_rows, cols, CV_8UC3); // FIXED: moved after actual_rows is defined
 
     if (rank == 0)
     {
         MPI_Scatterv(image.data, sendcounts.data(), displs.data(), MPI_UNSIGNED_CHAR,
-                     local_chunk.data, sendcounts[rank], MPI_UNSIGNED_CHAR,
-                     0, MPI_COMM_WORLD);
-    }else{
-        MPI_Scatterv(nullptr, nullptr, nullptr, MPI_UNSIGNED_CHAR,
-                     local_chunk.data, sendcounts[rank], MPI_UNSIGNED_CHAR,
-                     0, MPI_COMM_WORLD);
+            local_chunk.data, sendcounts[rank], MPI_UNSIGNED_CHAR,
+            0, MPI_COMM_WORLD);
     }
-
+    else
+    {
+        MPI_Scatterv(nullptr, nullptr, nullptr, MPI_UNSIGNED_CHAR,
+            local_chunk.data, sendcounts[rank], MPI_UNSIGNED_CHAR,
+            0, MPI_COMM_WORLD);
+    }
 
     string input_chunk_filename = "process_" + to_string(rank) + "_input.jpg";
     imwrite(input_chunk_filename, local_chunk);
@@ -225,8 +223,8 @@ int main(int argc, char **argv)
     }
 
     MPI_Gatherv(valid_result.data, recvcounts[rank], MPI_UNSIGNED_CHAR,
-                rank == 0 ? final_image.data : nullptr, recvcounts.data(),
-                recvdispls.data(), MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
+        rank == 0 ? final_image.data : nullptr, recvcounts.data(),
+        recvdispls.data(), MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
 
     if (rank == 0)
     {
@@ -252,4 +250,13 @@ int main(int argc, char **argv)
 
     MPI_Finalize();
     return 0;
+}
+
+std::string getImagePath() {
+    std::string path;
+    std::cout << "Enter image path: ";
+    std::getline(std::cin, path);
+    std::replace(path.begin(), path.end(), '\\', '/');
+    path.erase(std::remove(path.begin(), path.end(), '\"'), path.end());
+    return path;
 }
