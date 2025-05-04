@@ -1,0 +1,250 @@
+#include <mpi.h>
+#include <opencv2/opencv.hpp>
+#include <iostream>
+#include <vector>
+#include <cmath>
+#include <string>
+
+using namespace cv;
+using namespace std;
+
+void applyBlurToChannel(const Mat &input_channel, Mat &output_channel, int kernel_size)
+{
+    int rows = input_channel.rows;
+    int cols = input_channel.cols;
+    int k = kernel_size / 2;
+
+    Mat temp(rows, cols, CV_32F);
+
+    for (int y = 0; y < rows; y++)
+    {
+        const uchar *in_row = input_channel.ptr<uchar>(y);
+        float *temp_row = temp.ptr<float>(y);
+
+        for (int x = 0; x < cols; x++)
+        {
+            float sum = 0.0f;
+            int count = 0;
+
+            for (int i = max(0, x - k); i <= min(cols - 1, x + k); i++)
+            {
+                sum += in_row[i];
+                count++;
+            }
+
+            temp_row[x] = sum / count;
+        }
+    }
+
+    output_channel = Mat(rows, cols, CV_8U);
+
+    for (int x = 0; x < cols; x++)
+    {
+        for (int y = 0; y < rows; y++)
+        {
+            float sum = 0.0f;
+            int count = 0;
+
+            for (int j = max(0, y - k); j <= min(rows - 1, y + k); j++)
+            {
+                sum += temp.at<float>(j, x);
+                count++;
+            }
+
+            output_channel.at<uchar>(y, x) = saturate_cast<uchar>(sum / count);
+        }
+    }
+}
+
+void applyBoxBlur(const Mat &input, Mat &output, int kernel_size)
+{
+    vector<Mat> channels(3);
+    vector<Mat> blurred_channels(3);
+    split(input, channels);
+
+    for (int c = 0; c < 3; c++)
+    {
+        applyBlurToChannel(channels[c], blurred_channels[c], kernel_size);
+    }
+
+    merge(blurred_channels, output);
+}
+
+// Create side-by-side comparison of input and output images
+Mat createComparisonImage(const Mat &input, const Mat &output)
+{
+    // Ensure both images have the same dimensions
+    Mat resized_output;
+    if (input.size() != output.size())
+    {
+        resize(output, resized_output, input.size());
+    }
+    else
+    {
+        resized_output = output.clone();
+    }
+
+    // Create canvas for side-by-side comparison
+    int height = input.rows;
+    int width = input.cols;
+    Mat comparison(height + 60, width * 2 + 10, CV_8UC3, Scalar(255, 255, 255));
+
+    // Add titles
+    putText(comparison, "Original", Point(width / 2 - 50, 30), FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 0, 0), 2);
+    putText(comparison, "Blurred", Point(width + width / 2 - 50, 30), FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 0, 0), 2);
+
+    // Copy images
+    input.copyTo(comparison(Rect(0, 50, width, height)));
+    resized_output.copyTo(comparison(Rect(width + 10, 50, width, height)));
+
+    // Draw dividing line
+    line(comparison, Point(width + 5, 0), Point(width + 5, height + 50), Scalar(0, 0, 0), 2);
+
+    return comparison;
+}
+
+int main(int argc, char **argv)
+{
+    MPI_Init(&argc, &argv);
+
+    int rank, num_processes;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &num_processes);
+
+    if (argc < 4)
+    {
+        if (rank == 0)
+        {
+            cout << "Usage: mpirun -np <num_processes> ./blur <input_image> <output_image> <kernel_size>" << endl;
+        }
+        MPI_Finalize();
+        return -1;
+    }
+
+    string input_path = argv[1];
+    string output_path = argv[2];
+    int kernel_size = atoi(argv[3]);
+
+    if (kernel_size % 2 == 0 || kernel_size < 3)
+    {
+        if (rank == 0)
+        {
+            cout << "Kernel size must be an odd number greater than or equal to 3." << endl;
+        }
+        MPI_Finalize();
+        return -1;
+    }
+
+    Mat image;
+    int rows = 0, cols = 0, channels = 0;
+
+    if (rank == 0)
+    {
+        image = imread(input_path, IMREAD_COLOR);
+        if (image.empty())
+        {
+            cout << "Could not open or find the image." << endl;
+            MPI_Finalize();
+            return -1;
+        }
+
+        rows = image.rows;
+        cols = image.cols;
+        channels = image.channels();
+    }
+
+    MPI_Bcast(&rows, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&cols, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&channels, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+    int k = kernel_size / 2;
+    int rows_per_process = rows / num_processes;
+    int remainder = rows % num_processes;
+
+    int start_row = rank * rows_per_process + min(rank, remainder);
+    int local_rows = rows_per_process + (rank < remainder ? 1 : 0);
+
+    int top_row = max(0, start_row - k);
+    int bottom_row = min(rows, start_row + local_rows + k);
+    int actual_rows = bottom_row - top_row;
+
+    Mat local_chunk(actual_rows, cols, CV_8UC3);
+
+    if (rank == 0)
+    {
+        for (int i = 0; i < num_processes; ++i)
+        {
+            int i_start = i * rows_per_process + min(i, remainder);
+            int i_rows = rows_per_process + (i < remainder ? 1 : 0);
+            int i_top = max(0, i_start - k);
+            int i_bottom = min(rows, i_start + i_rows + k);
+            int i_actual = i_bottom - i_top;
+
+            if (i == 0)
+            {
+                image(Range(i_top, i_bottom), Range::all()).copyTo(local_chunk);
+            }
+            else
+            {
+                Mat temp = image(Range(i_top, i_bottom), Range::all());
+                MPI_Send(temp.data, i_actual * cols * channels, MPI_UNSIGNED_CHAR,
+                         i, 0, MPI_COMM_WORLD);
+            }
+        }
+    }
+    else
+    {
+        MPI_Recv(local_chunk.data, actual_rows * cols * channels, MPI_UNSIGNED_CHAR,
+                 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    }
+
+    // Save only the input chunk for each process
+    string input_chunk_filename = "process_" + to_string(rank) + "_input.jpg";
+    imwrite(input_chunk_filename, local_chunk);
+
+    int valid_start = (start_row <= top_row) ? 0 : (start_row - top_row);
+    int valid_end = valid_start + local_rows;
+
+    Mat blurred_chunk;
+    applyBoxBlur(local_chunk, blurred_chunk, kernel_size);
+
+    Mat valid_result = blurred_chunk(Range(valid_start, valid_end), Range::all());
+
+    // We're no longer saving individual process comparison images
+    // and no longer saving individual process output images
+
+    if (rank == 0)
+    {
+        Mat final_image(rows, cols, CV_8UC3);
+
+        valid_result.copyTo(final_image(Range(start_row, start_row + local_rows), Range::all()));
+
+        for (int i = 1; i < num_processes; ++i)
+        {
+            int i_start = i * rows_per_process + min(i, remainder);
+            int i_rows = rows_per_process + (i < remainder ? 1 : 0);
+
+            Mat temp(i_rows, cols, CV_8UC3);
+            MPI_Recv(temp.data, i_rows * cols * channels, MPI_UNSIGNED_CHAR,
+                     i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+            temp.copyTo(final_image(Range(i_start, i_start + i_rows), Range::all()));
+        }
+
+        imwrite(output_path, final_image);
+        cout << "Blurred image saved to " << output_path << endl;
+
+        // Only process 0 creates the comparison image after gathering all pieces
+        Mat full_comparison = createComparisonImage(image, final_image);
+        imwrite("full_comparison.jpg", full_comparison);
+        cout << "Side-by-side comparison saved to full_comparison.jpg" << endl;
+    }
+    else
+    {
+        MPI_Send(valid_result.data, local_rows * cols * channels, MPI_UNSIGNED_CHAR,
+                 0, 0, MPI_COMM_WORLD);
+    }
+
+    MPI_Finalize();
+    return 0;
+}
