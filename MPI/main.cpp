@@ -4,9 +4,11 @@
 #include <vector>
 #include <cmath>
 #include <string>
+#include <chrono>
 
 using namespace cv;
 using namespace std;
+using namespace std::chrono;
 
 void applyBlurToChannel(const Mat &input_channel, Mat &output_channel, int kernel_size)
 {
@@ -70,10 +72,8 @@ void applyBoxBlur(const Mat &input, Mat &output, int kernel_size)
     merge(blurred_channels, output);
 }
 
-
 Mat createComparisonImage(const Mat &input, const Mat &output)
 {
-    
     Mat resized_output;
     if (input.size() != output.size())
     {
@@ -87,7 +87,7 @@ Mat createComparisonImage(const Mat &input, const Mat &output)
     int height = input.rows;
     int width = input.cols;
     Mat comparison(height + 60, width * 2 + 10, CV_8UC3, Scalar(255, 255, 255));
-    
+
     putText(comparison, "Original", Point(width / 2 - 50, 30), FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 0, 0), 2);
     putText(comparison, "Blurred", Point(width + width / 2 - 50, 30), FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 0, 0), 2);
 
@@ -149,6 +149,8 @@ int main(int argc, char **argv)
         channels = image.channels();
     }
 
+    auto start_time = high_resolution_clock::now();
+
     MPI_Bcast(&rows, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&cols, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&channels, 1, MPI_INT, 0, MPI_COMM_WORLD);
@@ -164,37 +166,35 @@ int main(int argc, char **argv)
     int bottom_row = min(rows, start_row + local_rows + k);
     int actual_rows = bottom_row - top_row;
 
+    vector<int> sendcounts(num_processes);
+    vector<int> displs(num_processes);
+
+    for (int i = 0; i < num_processes; ++i)
+    {
+        int i_start = i * rows_per_process + min(i, remainder);
+        int i_rows = rows_per_process + (i < remainder ? 1 : 0);
+        int i_top = max(0, i_start - k);
+        int i_bottom = min(rows, i_start + i_rows + k);
+        int i_actual = i_bottom - i_top;
+
+        sendcounts[i] = i_actual * cols * channels;
+        displs[i] = i_top * cols * channels;
+    }
+
     Mat local_chunk(actual_rows, cols, CV_8UC3);
 
     if (rank == 0)
     {
-        for (int i = 0; i < num_processes; ++i)
-        {
-            int i_start = i * rows_per_process + min(i, remainder);
-            int i_rows = rows_per_process + (i < remainder ? 1 : 0);
-            int i_top = max(0, i_start - k);
-            int i_bottom = min(rows, i_start + i_rows + k);
-            int i_actual = i_bottom - i_top;
-
-            if (i == 0)
-            {
-                image(Range(i_top, i_bottom), Range::all()).copyTo(local_chunk);
-            }
-            else
-            {
-                Mat temp = image(Range(i_top, i_bottom), Range::all());
-                MPI_Send(temp.data, i_actual * cols * channels, MPI_UNSIGNED_CHAR,
-                         i, 0, MPI_COMM_WORLD);
-            }
-        }
-    }
-    else
-    {
-        MPI_Recv(local_chunk.data, actual_rows * cols * channels, MPI_UNSIGNED_CHAR,
-                 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Scatterv(image.data, sendcounts.data(), displs.data(), MPI_UNSIGNED_CHAR,
+                     local_chunk.data, sendcounts[rank], MPI_UNSIGNED_CHAR,
+                     0, MPI_COMM_WORLD);
+    }else{
+        MPI_Scatterv(nullptr, nullptr, nullptr, MPI_UNSIGNED_CHAR,
+                     local_chunk.data, sendcounts[rank], MPI_UNSIGNED_CHAR,
+                     0, MPI_COMM_WORLD);
     }
 
-    // Save only the input chunk for each process
+
     string input_chunk_filename = "process_" + to_string(rank) + "_input.jpg";
     imwrite(input_chunk_filename, local_chunk);
 
@@ -206,39 +206,48 @@ int main(int argc, char **argv)
 
     Mat valid_result = blurred_chunk(Range(valid_start, valid_end), Range::all());
 
-    // We're no longer saving individual process comparison images
-    // and no longer saving individual process output images
+    vector<int> recvcounts(num_processes);
+    vector<int> recvdispls(num_processes);
+
+    for (int i = 0; i < num_processes; ++i)
+    {
+        int i_start = i * rows_per_process + min(i, remainder);
+        int i_rows = rows_per_process + (i < remainder ? 1 : 0);
+
+        recvcounts[i] = i_rows * cols * channels;
+        recvdispls[i] = i_start * cols * channels;
+    }
+
+    Mat final_image;
+    if (rank == 0)
+    {
+        final_image = Mat(rows, cols, CV_8UC3);
+    }
+
+    MPI_Gatherv(valid_result.data, recvcounts[rank], MPI_UNSIGNED_CHAR,
+                rank == 0 ? final_image.data : nullptr, recvcounts.data(),
+                recvdispls.data(), MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
 
     if (rank == 0)
     {
-        Mat final_image(rows, cols, CV_8UC3);
-
-        valid_result.copyTo(final_image(Range(start_row, start_row + local_rows), Range::all()));
-
-        for (int i = 1; i < num_processes; ++i)
-        {
-            int i_start = i * rows_per_process + min(i, remainder);
-            int i_rows = rows_per_process + (i < remainder ? 1 : 0);
-
-            Mat temp(i_rows, cols, CV_8UC3);
-            MPI_Recv(temp.data, i_rows * cols * channels, MPI_UNSIGNED_CHAR,
-                     i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-            temp.copyTo(final_image(Range(i_start, i_start + i_rows), Range::all()));
-        }
+        auto end_time = high_resolution_clock::now();
+        auto duration = duration_cast<milliseconds>(end_time - start_time);
+        double elapsed_time = duration.count() / 1000.0;
 
         imwrite(output_path, final_image);
         cout << "Blurred image saved to " << output_path << endl;
 
-        // Only process 0 creates the comparison image after gathering all pieces
         Mat full_comparison = createComparisonImage(image, final_image);
         imwrite("full_comparison.jpg", full_comparison);
         cout << "Side-by-side comparison saved to full_comparison.jpg" << endl;
-    }
-    else
-    {
-        MPI_Send(valid_result.data, local_rows * cols * channels, MPI_UNSIGNED_CHAR,
-                 0, 0, MPI_COMM_WORLD);
+
+        cout << "----------------------------------------" << endl;
+        cout << "Performance Statistics:" << endl;
+        cout << "Total execution time: " << elapsed_time << " seconds" << endl;
+        cout << "Image size: " << rows << "x" << cols << " pixels" << endl;
+        cout << "Number of processes: " << num_processes << endl;
+        cout << "Kernel size: " << kernel_size << endl;
+        cout << "----------------------------------------" << endl;
     }
 
     MPI_Finalize();
