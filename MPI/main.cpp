@@ -107,20 +107,42 @@ int main(int argc, char **argv)
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &num_processes);
 
-    if (argc < 4)
+    string input_path, output_path;
+    int kernel_size;
+    int input_path_len = 0, output_path_len = 0;
+
+    
+    if (rank == 0)
     {
-        if (rank == 0)
-        {
-            cout << "Usage: mpirun -np <num_processes> ./blur <input_image> <output_image> <kernel_size>" << endl;
-        }
-        MPI_Finalize();
-        return -1;
+        cout << "Enter input image path: ";
+        cin >> input_path;
+        input_path_len = input_path.length();
+
+        cout << "Enter output image path: ";
+        cin >> output_path;
+        output_path_len = output_path.length();
+
+        cout << "Enter kernel size (odd number >= 3): ";
+        cin >> kernel_size;
     }
 
-    string input_path = argv[1];
-    string output_path = argv[2];
-    int kernel_size = atoi(argv[3]);
+   
+    MPI_Bcast(&input_path_len, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&output_path_len, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&kernel_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
+
+    if (rank != 0)
+    {
+        input_path.resize(input_path_len);
+        output_path.resize(output_path_len);
+    }
+
+    // Then broadcast the actual path strings
+    MPI_Bcast(&input_path[0], input_path_len, MPI_CHAR, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&output_path[0], output_path_len, MPI_CHAR, 0, MPI_COMM_WORLD);
+
+  
     if (kernel_size % 2 == 0 || kernel_size < 3)
     {
         if (rank == 0)
@@ -188,12 +210,13 @@ int main(int argc, char **argv)
         MPI_Scatterv(image.data, sendcounts.data(), displs.data(), MPI_UNSIGNED_CHAR,
                      local_chunk.data, sendcounts[rank], MPI_UNSIGNED_CHAR,
                      0, MPI_COMM_WORLD);
-    }else{
+    }
+    else
+    {
         MPI_Scatterv(nullptr, nullptr, nullptr, MPI_UNSIGNED_CHAR,
                      local_chunk.data, sendcounts[rank], MPI_UNSIGNED_CHAR,
                      0, MPI_COMM_WORLD);
     }
-
 
     string input_chunk_filename = "process_" + to_string(rank) + "_input.jpg";
     imwrite(input_chunk_filename, local_chunk);
