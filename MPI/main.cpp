@@ -76,6 +76,30 @@ void applyBoxBlur(const Mat &input, Mat &output, int kernel_size)
     merge(blurred_channels, output);
 }
 
+void manualCopyTo(const Mat &source, Mat &destination, const Rect &roi)
+{
+    for(int i = 0; i < roi.height; i++) {
+        for(int j = 0; j < roi.width; j++) {
+            for(int c = 0; c < source.channels(); c++) {
+                destination.at<Vec3b>(i + roi.y, j + roi.x)[c] = source.at<Vec3b>(i, j)[c];
+            }
+        }
+    }
+}
+
+Mat manualClone(const Mat &source)
+{
+    Mat result(source.rows, source.cols, source.type());
+    for(int i = 0; i < source.rows; i++) {
+        for(int j = 0; j < source.cols; j++) {
+            for(int c = 0; c < source.channels(); c++) {
+                result.at<Vec3b>(i, j)[c] = source.at<Vec3b>(i, j)[c];
+            }
+        }
+    }
+    return result;
+}
+
 Mat createComparisonImage(const Mat &input, const Mat &output)
 {
     Mat resized_output;
@@ -85,7 +109,7 @@ Mat createComparisonImage(const Mat &input, const Mat &output)
     }
     else
     {
-        resized_output = output.clone();
+        resized_output = manualClone(output);
     }
 
     int height = input.rows;
@@ -95,8 +119,8 @@ Mat createComparisonImage(const Mat &input, const Mat &output)
     putText(comparison, "Original", Point(width / 2 - 50, 30), FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 0, 0), 2);
     putText(comparison, "Blurred", Point(width + width / 2 - 50, 30), FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 0, 0), 2);
 
-    input.copyTo(comparison(Rect(0, 50, width, height)));
-    resized_output.copyTo(comparison(Rect(width + 10, 50, width, height)));
+    manualCopyTo(input, comparison, Rect(0, 50, width, height));
+    manualCopyTo(resized_output, comparison, Rect(width + 10, 50, width, height));
 
     line(comparison, Point(width + 5, 0), Point(width + 5, height + 50), Scalar(0, 0, 0), 2);
 
