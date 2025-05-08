@@ -1,225 +1,3 @@
-//#include <opencv2/core.hpp>
-//#include <opencv2/imgcodecs.hpp>
-//#include <opencv2/highgui.hpp>
-//#include <opencv2/imgproc.hpp>
-//#include <string>
-//#include <iostream>
-//#include <algorithm>
-//#include <omp.h>
-//
-//std::string getImagePath();
-//cv::Mat applyLowPassFilter(const cv::Mat& src, const cv::Mat& kernel);
-//
-//int main() {
-//    std::string path;
-//    bool flag = false;
-//    std::string grayFlag = "y";
-//
-//    // Get valid image path
-//    do {
-//        if (flag) {
-//            std::cout << "Incorrect path please check the path and try again!\n";
-//        }
-//        path = getImagePath();
-//        flag = true;
-//    } while (!cv::haveImageReader(path));
-//
-//    cv::Mat img = cv::imread(path);
-//    if (img.empty()) {
-//        std::cerr << "Failed to load image.\n";
-//        return -1;
-//    }
-//
-//    // Option to convert to grayscale
-//    std::cout << "Do you want the image in grayscale? [y/n]: ";
-//    std::cin >> grayFlag;
-//
-//    if (grayFlag[0] == 'y') {
-//        cv::cvtColor(img, img, cv::COLOR_BGR2GRAY);
-//    }
-//
-//    int kernelLength, kernelWidth;
-//
-//    // Get kernel dimensions
-//    std::cout << "Dynamic kernel choices must be > 1 and ideally odd (3, 5, 7...)\n";
-//    std::cout << "Choose Kernel length: ";
-//    std::cin >> kernelLength;
-//    std::cout << "Choose Kernel width: ";
-//    std::cin >> kernelWidth;
-//
-//    std::cout << "\nYour configurations are:\n"
-//        << "Image path: " << path << "\n"
-//        << "Length = " << kernelLength << "\n"
-//        << "Width = " << kernelWidth << "\n";
-//
-//    double start_time = omp_get_wtime();
-//
-//    // Create separable 1D kernels, normalized to sum to 1
-//    cv::Mat horizontalKernel = cv::Mat::ones(1, kernelWidth, CV_32F) / kernelWidth;
-//    cv::Mat verticalKernel = cv::Mat::ones(kernelLength, 1, CV_32F) / kernelLength;
-//
-//    cv::Mat tempImg = cv::Mat::zeros(img.size(), img.type());
-//    cv::Mat imgdest = cv::Mat::zeros(img.size(), img.type());
-//
-//    // Apply horizontal pass
-//    int totalRows = img.rows;
-//#pragma omp parallel
-//    {
-//        int threadID = omp_get_thread_num();
-//        int numThreads = omp_get_num_threads();
-//        int rowsPerThread = totalRows / numThreads;
-//        int startRow = threadID * rowsPerThread;
-//        int endRow = (threadID == numThreads - 1) ? totalRows : startRow + rowsPerThread;
-//
-//        cv::Mat subImg = img.rowRange(startRow, endRow);
-//        cv::Mat subDest = applyLowPassFilter(subImg, horizontalKernel);
-//        subDest.copyTo(tempImg.rowRange(startRow, endRow));
-//    }
-//
-//    // Apply vertical pass
-//#pragma omp parallel
-//    {
-//        int threadID = omp_get_thread_num();
-//        int numThreads = omp_get_num_threads();
-//        int rowsPerThread = totalRows / numThreads;
-//        int startRow = threadID * rowsPerThread;
-//        int endRow = (threadID == numThreads - 1) ? totalRows : startRow + rowsPerThread;
-//
-//        int pad = kernelLength / 2;
-//        int safeStart = std::max(startRow - pad, 0);
-//        int safeEnd = std::min(endRow + pad, totalRows);
-//
-//        cv::Mat subImg = tempImg.rowRange(safeStart, safeEnd);
-//        cv::Mat subDest = applyLowPassFilter(subImg, verticalKernel);
-//
-//        int copyStart = startRow - safeStart;
-//        int copyLength = endRow - startRow;
-//        subDest.rowRange(copyStart, copyStart + copyLength).copyTo(imgdest.rowRange(startRow, endRow));
-//    }
-//
-//    double end_time = omp_get_wtime();
-//    std::cout << "Execution time: " << (end_time - start_time) * 1000.0 << " milliseconds" << std::endl;
-//
-//    // Display results
-//    cv::imshow("Image Before", img);
-//    cv::imshow("Image After (Parallel Filter)", imgdest);
-//    cv::moveWindow("Image Before", 0, 45);
-//    cv::waitKey(0);
-//    cv::destroyAllWindows();
-//
-//    return 0;
-//}
-//
-//std::string getImagePath() {
-//    std::string path;
-//    std::cout << "Enter image path: ";
-//    std::getline(std::cin, path);
-//    std::replace(path.begin(), path.end(), '\\', '/');
-//    path.erase(std::remove(path.begin(), path.end(), '\"'), path.end());
-//    return path;
-//}
-//
-//cv::Mat applyLowPassFilter(const cv::Mat& src, const cv::Mat& kernel) {
-//    cv::Mat dst = cv::Mat::zeros(src.size(), src.type());
-//    int channels = src.channels();
-//
-//    bool isHorizontal = (kernel.rows == 1);
-//    bool isVertical = (kernel.cols == 1);
-//
-//    int padH = isVertical ? kernel.rows / 2 : 0;
-//    int padW = isHorizontal ? kernel.cols / 2 : 0;
-//
-//    cv::Mat padded;
-//    cv::copyMakeBorder(src, padded, padH, padH, padW, padW, cv::BORDER_REPLICATE);
-//
-//    std::vector<float> kernelValues;
-//    if (isHorizontal) {
-//        kernelValues.resize(kernel.cols);
-//        for (int kx = 0; kx < kernel.cols; ++kx)
-//            kernelValues[kx] = kernel.at<float>(0, kx);
-//    }
-//    else if (isVertical) {
-//        kernelValues.resize(kernel.rows);
-//        for (int ky = 0; ky < kernel.rows; ++ky)
-//            kernelValues[ky] = kernel.at<float>(ky, 0);
-//    }
-//
-//    if (channels == 1) {
-//        if (isHorizontal) {
-//            for (int y = 0; y < src.rows; ++y) {
-//                const uchar* paddedRow = padded.ptr<uchar>(y);
-//                uchar* dstRow = dst.ptr<uchar>(y);
-//#pragma omp simd
-//                for (int x = 0; x < src.cols; ++x) {
-//                    float sum = 0.0f;
-//                    for (int kx = 0; kx < kernel.cols; ++kx)
-//                        sum += paddedRow[x + kx] * kernelValues[kx];
-//                    dstRow[x] = cv::saturate_cast<uchar>(sum);
-//                }
-//            }
-//        }
-//        else if (isVertical) {
-//            for (int y = 0; y < src.rows; ++y) {
-//                uchar* dstRow = dst.ptr<uchar>(y);
-//#pragma omp simd
-//                for (int x = 0; x < src.cols; ++x) {
-//                    float sum = 0.0f;
-//                    for (int ky = 0; ky < kernel.rows; ++ky)
-//                        sum += padded.ptr<uchar>(y + ky)[x] * kernelValues[ky];
-//                    dstRow[x] = cv::saturate_cast<uchar>(sum);
-//                }
-//            }
-//        }
-//    }
-//    else {
-//        if (isHorizontal) {
-//            for (int y = 0; y < src.rows; ++y) {
-//                const cv::Vec3b* paddedRow = padded.ptr<cv::Vec3b>(y);
-//                cv::Vec3b* dstRow = dst.ptr<cv::Vec3b>(y);
-//#pragma omp simd
-//                for (int x = 0; x < src.cols; ++x) {
-//                    float sumB = 0.0f, sumG = 0.0f, sumR = 0.0f;
-//                    for (int kx = 0; kx < kernel.cols; ++kx) {
-//                        const cv::Vec3b& pixel = paddedRow[x + kx];
-//                        float kv = kernelValues[kx];
-//                        sumB += pixel[0] * kv;
-//                        sumG += pixel[1] * kv;
-//                        sumR += pixel[2] * kv;
-//                    }
-//                    dstRow[x] = cv::Vec3b(
-//                        cv::saturate_cast<uchar>(sumB),
-//                        cv::saturate_cast<uchar>(sumG),
-//                        cv::saturate_cast<uchar>(sumR)
-//                    );
-//                }
-//            }
-//        }
-//        else if (isVertical) {
-//            for (int y = 0; y < src.rows; ++y) {
-//                cv::Vec3b* dstRow = dst.ptr<cv::Vec3b>(y);
-//#pragma omp simd
-//                for (int x = 0; x < src.cols; ++x) {
-//                    float sumB = 0.0f, sumG = 0.0f, sumR = 0.0f;
-//                    for (int ky = 0; ky < kernel.rows; ++ky) {
-//                        const cv::Vec3b& pixel = padded.ptr<cv::Vec3b>(y + ky)[x];
-//                        float kv = kernelValues[ky];
-//                        sumB += pixel[0] * kv;
-//                        sumG += pixel[1] * kv;
-//                        sumR += pixel[2] * kv;
-//                    }
-//                    dstRow[x] = cv::Vec3b(
-//                        cv::saturate_cast<uchar>(sumB),
-//                        cv::saturate_cast<uchar>(sumG),
-//                        cv::saturate_cast<uchar>(sumR)
-//                    );
-//                }
-//            }
-//        }
-//    }
-//
-//    return dst;
-//}
-
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/highgui.hpp>
@@ -251,16 +29,14 @@ Image convertToGrayscale(const Image& src);
 void applyLowPassFilter(Image& img, const std::vector<float>& kernel, bool isHorizontal);
 void displayImage(const Image& img, const std::string& windowName);
 cv::Mat imageToMat(const Image& img);
+int getValidThreadCount();
 
 int main() {
     std::string path;
     bool flag = false;
     std::string grayFlag = "y";
 
-    std::cout << "Enter number of threads to use: ";
-    std::cin >> userThreads;
-    //omp_set_num_threads(userThreads);
-    std::cin.ignore(); // consume newline after int input
+    userThreads = getValidThreadCount();
 
     do {
         if (flag) {
@@ -543,4 +319,37 @@ Image matToImage(const cv::Mat& mat) {
         }
     }
     return img;
+}
+
+int getValidThreadCount() {
+    int userThreads = 1;
+    bool validInput = false;
+
+    std::cout << "To use the max processes of your computer enter (0)\n";
+    std::cout << "Enter number of threads to use: ";
+
+    while (!validInput) {
+        if (std::cin >> userThreads) {
+            if (userThreads < 0) {
+                std::cout << "Error: Number of threads cannot be negative.\n";
+                std::cout << "Please enter a positive number (or 0 for max): ";
+            }
+            else {
+                validInput = true;
+            }
+        }
+        else {
+            std::cin.clear();
+            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+            std::cout << "Error: Please enter a valid number.\n";
+            std::cout << "Enter number of threads to use: ";
+        }
+    }
+
+    if (userThreads == 0 || userThreads > omp_get_max_threads()) {
+        userThreads = omp_get_max_threads();
+        std::cout << "Using maximum available threads: " << userThreads << std::endl;
+    }
+
+    return userThreads;
 }
