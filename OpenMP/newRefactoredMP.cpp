@@ -38,6 +38,8 @@ int main() {
 
     userThreads = getValidThreadCount();
 
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+
     do {
         if (flag) {
             std::cout << "Incorrect path please check the path and try again!\n";
@@ -195,7 +197,7 @@ void applyLowPassFilter(Image& img, const std::vector<float>& kernel, bool isHor
 #pragma omp parallel for num_threads(userThreads)
         for (int y = 0; y < rows; ++y) {
             std::vector<unsigned char> padded_row((cols + 2 * pad) * channels);
-            // Fill padded_row with boundary replication
+            // Filling padded_row with boundary replication
             for (int x = 0; x < pad; ++x) {
                 for (int c = 0; c < channels; ++c) {
                     padded_row[x * channels + c] = img.at(y, 0, c);
@@ -211,14 +213,14 @@ void applyLowPassFilter(Image& img, const std::vector<float>& kernel, bool isHor
                     padded_row[x * channels + c] = img.at(y, cols - 1, c);
                 }
             }
-            // Initialize sums for the first window
+            // Initializing sums for the first window
             std::vector<float> sums(channels, 0.0f);
             for (int kx = 0; kx < kernelSize; ++kx) {
                 for (int c = 0; c < channels; ++c) {
                     sums[c] += static_cast<float>(padded_row[kx * channels + c]);
                 }
             }
-            // Apply sliding window sum
+            // Appling sliding window sum
             for (int x = 0; x < cols; ++x) {
                 for (int c = 0; c < channels; ++c) {
                     float filtered_value = sums[c] * factor;
@@ -239,7 +241,7 @@ void applyLowPassFilter(Image& img, const std::vector<float>& kernel, bool isHor
 #pragma omp parallel for num_threads(userThreads)
         for (int x = 0; x < cols; ++x) {
             std::vector<unsigned char> padded_col((rows + 2 * pad) * channels);
-            // Fill padded_col with boundary replication
+            // Filling padded_col with boundary replication
             for (int y = 0; y < pad; ++y) {
                 for (int c = 0; c < channels; ++c) {
                     padded_col[y * channels + c] = img.at(0, x, c);
@@ -255,14 +257,14 @@ void applyLowPassFilter(Image& img, const std::vector<float>& kernel, bool isHor
                     padded_col[y * channels + c] = img.at(rows - 1, x, c);
                 }
             }
-            // Initialize sums for the first window
+            // Initializing sums for the first window
             std::vector<float> sums(channels, 0.0f);
             for (int ky = 0; ky < kernelSize; ++ky) {
                 for (int c = 0; c < channels; ++c) {
                     sums[c] += static_cast<float>(padded_col[ky * channels + c]);
                 }
             }
-            // Apply sliding window sum
+            // Appling sliding window sum
             for (int y = 0; y < rows; ++y) {
                 for (int c = 0; c < channels; ++c) {
                     float filtered_value = sums[c] * factor;

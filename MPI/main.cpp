@@ -14,7 +14,7 @@ using namespace std::chrono;
 std::string getImagePath();
 
 
-void applyBlurToChannel(const Mat &input_channel, Mat &output_channel, int kernel_size)
+void applyBlurToChannel(const Mat& input_channel, Mat& output_channel, int kernel_size)
 {
     int rows = input_channel.rows;
     int cols = input_channel.cols;
@@ -24,8 +24,8 @@ void applyBlurToChannel(const Mat &input_channel, Mat &output_channel, int kerne
 
     for (int y = 0; y < rows; y++)
     {
-        const uchar *in_row = input_channel.ptr<uchar>(y);
-        float *temp_row = temp.ptr<float>(y);
+        const uchar* in_row = input_channel.ptr<uchar>(y);
+        float* temp_row = temp.ptr<float>(y);
 
         for (int x = 0; x < cols; x++)
         {
@@ -62,7 +62,7 @@ void applyBlurToChannel(const Mat &input_channel, Mat &output_channel, int kerne
     }
 }
 
-void applyBoxBlur(const Mat &input, Mat &output, int kernel_size)
+void applyBoxBlur(const Mat& input, Mat& output, int kernel_size)
 {
     vector<Mat> channels(3);
     vector<Mat> blurred_channels(3);
@@ -76,7 +76,31 @@ void applyBoxBlur(const Mat &input, Mat &output, int kernel_size)
     merge(blurred_channels, output);
 }
 
-Mat createComparisonImage(const Mat &input, const Mat &output)
+void manualCopyTo(const Mat& source, Mat& destination, const Rect& roi)
+{
+    for (int i = 0; i < roi.height; i++) {
+        for (int j = 0; j < roi.width; j++) {
+            for (int c = 0; c < source.channels(); c++) {
+                destination.at<Vec3b>(i + roi.y, j + roi.x)[c] = source.at<Vec3b>(i, j)[c];
+            }
+        }
+    }
+}
+
+Mat manualClone(const Mat& source)
+{
+    Mat result(source.rows, source.cols, source.type());
+    for (int i = 0; i < source.rows; i++) {
+        for (int j = 0; j < source.cols; j++) {
+            for (int c = 0; c < source.channels(); c++) {
+                result.at<Vec3b>(i, j)[c] = source.at<Vec3b>(i, j)[c];
+            }
+        }
+    }
+    return result;
+}
+
+Mat createComparisonImage(const Mat& input, const Mat& output)
 {
     Mat resized_output;
     if (input.size() != output.size())
@@ -85,7 +109,7 @@ Mat createComparisonImage(const Mat &input, const Mat &output)
     }
     else
     {
-        resized_output = output.clone();
+        resized_output = manualClone(output);
     }
 
     int height = input.rows;
@@ -95,8 +119,8 @@ Mat createComparisonImage(const Mat &input, const Mat &output)
     putText(comparison, "Original", Point(width / 2 - 50, 30), FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 0, 0), 2);
     putText(comparison, "Blurred", Point(width + width / 2 - 50, 30), FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 0, 0), 2);
 
-    input.copyTo(comparison(Rect(0, 50, width, height)));
-    resized_output.copyTo(comparison(Rect(width + 10, 50, width, height)));
+    manualCopyTo(input, comparison, Rect(0, 50, width, height));
+    manualCopyTo(resized_output, comparison, Rect(width + 10, 50, width, height));
 
     line(comparison, Point(width + 5, 0), Point(width + 5, height + 50), Scalar(0, 0, 0), 2);
 
