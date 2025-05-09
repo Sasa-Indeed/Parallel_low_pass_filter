@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <vector>
 #include <omp.h>
-#include <opencv2/imgproc.hpp>
 #include <chrono>
 
 struct Image {
@@ -74,7 +73,7 @@ int main() {
         << "Length = " << kernelLength << "\n"
         << "Width = " << kernelWidth << "\n";
 
-    
+
     auto start_time = std::chrono::high_resolution_clock::now();
 
     std::vector<float> horizontalKernel(kernelWidth, 1.0f / kernelWidth);
@@ -121,7 +120,7 @@ std::string getImagePath() {
 }
 
 Image loadImage(const std::string& path) {
-    cv::Mat cvImg = cv::imread(path, cv::IMREAD_UNCHANGED);
+    cv::Mat cvImg = cv::imread(path, cv::IMREAD_COLOR);
     if (cvImg.empty()) {
         return Image(0, 0, 0);
     }
@@ -184,6 +183,107 @@ void displayImage(const Image& img, const std::string& windowName) {
     cv::imshow(windowName, cvImg);
 }
 
+std::vector<unsigned char> createPaddedRow(const Image& img, int y, int pad, int channels) {
+    int cols = img.cols;
+    std::vector<unsigned char> padded_row((cols + 2 * pad) * channels);
+    // Left padding
+    for (int x = 0; x < pad; ++x) {
+        for (int c = 0; c < channels; ++c) {
+            padded_row[x * channels + c] = img.at(y, 0, c);
+        }
+    }
+    // Original row
+    for (int x = 0; x < cols; ++x) {
+        for (int c = 0; c < channels; ++c) {
+            padded_row[(x + pad) * channels + c] = img.at(y, x, c);
+        }
+    }
+    // Right padding
+    for (int x = cols + pad; x < cols + 2 * pad; ++x) {
+        for (int c = 0; c < channels; ++c) {
+            padded_row[x * channels + c] = img.at(y, cols - 1, c);
+        }
+    }
+    return padded_row;
+}
+
+std::vector<unsigned char> createPaddedCol(const Image& img, int x, int pad, int channels) {
+    int rows = img.rows;
+    std::vector<unsigned char> padded_col((rows + 2 * pad) * channels);
+    // Top padding
+    for (int y = 0; y < pad; ++y) {
+        for (int c = 0; c < channels; ++c) {
+            padded_col[y * channels + c] = img.at(0, x, c);
+        }
+    }
+    // Original column
+    for (int y = 0; y < rows; ++y) {
+        for (int c = 0; c < channels; ++c) {
+            padded_col[(y + pad) * channels + c] = img.at(y, x, c);
+        }
+    }
+    // Bottom padding
+    for (int y = rows + pad; y < rows + 2 * pad; ++y) {
+        for (int c = 0; c < channels; ++c) {
+            padded_col[y * channels + c] = img.at(rows - 1, x, c);
+        }
+    }
+    return padded_col;
+}
+
+void filterRow(const std::vector<unsigned char>& padded_row, int cols, int channels,
+               int kernelSize, float factor, std::vector<unsigned char>& temp_data, int y) {
+    std::vector<float> sums(channels, 0.0f);
+    // Initialize sums
+    for (int kx = 0; kx < kernelSize; ++kx) {
+        for (int c = 0; c < channels; ++c) {
+            sums[c] += static_cast<float>(padded_row[kx * channels + c]);
+        }
+    }
+    // Apply sliding window
+    for (int x = 0; x < cols; ++x) {
+        for (int c = 0; c < channels; ++c) {
+            float filtered_value = sums[c] * factor;
+            temp_data[(y * cols + x) * channels + c] = static_cast<unsigned char>(
+                    std::min(std::max(filtered_value, 0.0f), 255.0f)
+            );
+        }
+        if (x < cols - 1) {
+            for (int c = 0; c < channels; ++c) {
+                sums[c] -= static_cast<float>(padded_row[x * channels + c]);
+                sums[c] += static_cast<float>(padded_row[(x + kernelSize) * channels + c]);
+            }
+        }
+    }
+}
+
+void filterCol(const std::vector<unsigned char>& padded_col, int rows, int channels,
+               int kernelSize, float factor, std::vector<unsigned char>& temp_data,
+               int x, int cols) {
+    std::vector<float> sums(channels, 0.0f);
+    // Initialize sums
+    for (int ky = 0; ky < kernelSize; ++ky) {
+        for (int c = 0; c < channels; ++c) {
+            sums[c] += static_cast<float>(padded_col[ky * channels + c]);
+        }
+    }
+    // Apply sliding window
+    for (int y = 0; y < rows; ++y) {
+        for (int c = 0; c < channels; ++c) {
+            float filtered_value = sums[c] * factor;
+            temp_data[(y * cols + x) * channels + c] = static_cast<unsigned char>(
+                    std::min(std::max(filtered_value, 0.0f), 255.0f)
+            );
+        }
+        if (y < rows - 1) {
+            for (int c = 0; c < channels; ++c) {
+                sums[c] -= static_cast<float>(padded_col[y * channels + c]);
+                sums[c] += static_cast<float>(padded_col[(y + kernelSize) * channels + c]);
+            }
+        }
+    }
+}
+
 void applyLowPassFilter(Image& img, const std::vector<float>& kernel, bool isHorizontal) {
     int kernelSize = kernel.size();
     int pad = kernelSize / 2;
@@ -196,89 +296,14 @@ void applyLowPassFilter(Image& img, const std::vector<float>& kernel, bool isHor
     if (isHorizontal) {
 #pragma omp parallel for num_threads(userThreads)
         for (int y = 0; y < rows; ++y) {
-            std::vector<unsigned char> padded_row((cols + 2 * pad) * channels);
-            // Filling padded_row with boundary replication
-            for (int x = 0; x < pad; ++x) {
-                for (int c = 0; c < channels; ++c) {
-                    padded_row[x * channels + c] = img.at(y, 0, c);
-                }
-            }
-            for (int x = 0; x < cols; ++x) {
-                for (int c = 0; c < channels; ++c) {
-                    padded_row[(x + pad) * channels + c] = img.at(y, x, c);
-                }
-            }
-            for (int x = cols + pad; x < cols + 2 * pad; ++x) {
-                for (int c = 0; c < channels; ++c) {
-                    padded_row[x * channels + c] = img.at(y, cols - 1, c);
-                }
-            }
-            // Initializing sums for the first window
-            std::vector<float> sums(channels, 0.0f);
-            for (int kx = 0; kx < kernelSize; ++kx) {
-                for (int c = 0; c < channels; ++c) {
-                    sums[c] += static_cast<float>(padded_row[kx * channels + c]);
-                }
-            }
-            // Appling sliding window sum
-            for (int x = 0; x < cols; ++x) {
-                for (int c = 0; c < channels; ++c) {
-                    float filtered_value = sums[c] * factor;
-                    temp_data[(y * cols + x) * channels + c] = static_cast<unsigned char>(
-                        std::min(std::max(filtered_value, 0.0f), 255.0f)
-                        );
-                }
-                if (x < cols - 1) {
-                    for (int c = 0; c < channels; ++c) {
-                        sums[c] -= static_cast<float>(padded_row[x * channels + c]);
-                        sums[c] += static_cast<float>(padded_row[(x + kernelSize) * channels + c]);
-                    }
-                }
-            }
+            std::vector<unsigned char> padded_row = createPaddedRow(img, y, pad, channels);
+            filterRow(padded_row, cols, channels, kernelSize, factor, temp_data, y);
         }
-    }
-    else {
+    } else {
 #pragma omp parallel for num_threads(userThreads)
         for (int x = 0; x < cols; ++x) {
-            std::vector<unsigned char> padded_col((rows + 2 * pad) * channels);
-            // Filling padded_col with boundary replication
-            for (int y = 0; y < pad; ++y) {
-                for (int c = 0; c < channels; ++c) {
-                    padded_col[y * channels + c] = img.at(0, x, c);
-                }
-            }
-            for (int y = 0; y < rows; ++y) {
-                for (int c = 0; c < channels; ++c) {
-                    padded_col[(y + pad) * channels + c] = img.at(y, x, c);
-                }
-            }
-            for (int y = rows + pad; y < rows + 2 * pad; ++y) {
-                for (int c = 0; c < channels; ++c) {
-                    padded_col[y * channels + c] = img.at(rows - 1, x, c);
-                }
-            }
-            // Initializing sums for the first window
-            std::vector<float> sums(channels, 0.0f);
-            for (int ky = 0; ky < kernelSize; ++ky) {
-                for (int c = 0; c < channels; ++c) {
-                    sums[c] += static_cast<float>(padded_col[ky * channels + c]);
-                }
-            }
-            // Appling sliding window sum
-            for (int y = 0; y < rows; ++y) {
-                for (int c = 0; c < channels; ++c) {
-                    float filtered_value = sums[c] * factor;
-                    temp_data[(y * cols + x) * channels + c] = static_cast<unsigned char>(
-                        std::min(std::max(filtered_value, 0.0f), 255.0f)
-                        );
-                }
-                if (y < rows - 1) {
-                    for (int c = 0; c < channels; ++c) {
-                        sums[c] -= static_cast<float>(padded_col[y * channels + c]);
-                        sums[c] += static_cast<float>(padded_col[(y + kernelSize) * channels + c]);
-                    }
-                }
-            }
+            std::vector<unsigned char> padded_col = createPaddedCol(img, x, pad, channels);
+            filterCol(padded_col, rows, channels, kernelSize, factor, temp_data, x, cols);
         }
     }
 
@@ -298,29 +323,6 @@ cv::Mat imageToMat(const Image& img) {
         }
     }
     return mat;
-}
-
-Image matToImage(const cv::Mat& mat) {
-    int channels = mat.channels();
-    Image img(mat.rows, mat.cols, channels);
-    if (channels == 1) {
-        for (int y = 0; y < mat.rows; ++y) {
-            for (int x = 0; x < mat.cols; ++x) {
-                img.at(y, x, 0) = mat.at<unsigned char>(y, x);
-            }
-        }
-    }
-    else {
-        for (int y = 0; y < mat.rows; ++y) {
-            for (int x = 0; x < mat.cols; ++x) {
-                cv::Vec3b pixel = mat.at<cv::Vec3b>(y, x);
-                img.at(y, x, 0) = pixel[0];
-                img.at(y, x, 1) = pixel[1];
-                img.at(y, x, 2) = pixel[2];
-            }
-        }
-    }
-    return img;
 }
 
 int getValidThreadCount() {
